@@ -5,7 +5,7 @@ import glob
 import json
 
 import spacy
-
+from spacy import displacy
 import paper_schema
 
 
@@ -15,10 +15,15 @@ class SpacyTokenizer:
     __exist_files = []
     __nlp: any
 
+    def __init__(self):
+        a = spacy.prefer_gpu(0)
+        self.__nlp = spacy.load("en_core_web_trf")
+
     def run(self):
         self.__open_all_files("*.json")
         self.__open_exist_files("*.json")
-        self.__nlp = spacy.load("en_core_web_trf")
+        s = "未处理文件数:{}".format(len(self.__files))
+        print(s)
         for file_path in self.__files:
             paper = self.__read_json(file_path)
             result_words = []
@@ -31,6 +36,10 @@ class SpacyTokenizer:
             if len(paper.back_matter) > 0:
                 result_words += self.__paragraph_tokenize(paper.back_matter)
             self.__wirte_json(self.get_directory_path(), paper.paper_id, result_words)
+
+    def draw_dependency_parse(self, text: str):
+        doc = self.__nlp(text)
+        displacy.serve(doc, style="dep")
 
     def __text_tokenize(self, text: str):
         result: list[str] = []
