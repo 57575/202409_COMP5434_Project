@@ -7,6 +7,8 @@ import json
 import spacy
 from spacy import displacy
 import paper_schema
+import langid
+import pandas as pd
 
 
 class SpacyTokenizer:
@@ -14,14 +16,15 @@ class SpacyTokenizer:
     __files = []
     __exist_files = []
     __nlp: any
+    __stopwords: list[str] = []
 
     def __init__(self):
         a = spacy.prefer_gpu(0)
         self.__nlp = spacy.load("en_core_web_trf")
 
     def run(self):
+        # self.__open_exist_files("*.json")
         self.__open_all_files("*.json")
-        self.__open_exist_files("*.json")
         s = "未处理文件数:{}".format(len(self.__files))
         print(s)
         for file_path in self.__files:
@@ -37,24 +40,52 @@ class SpacyTokenizer:
                 result_words += self.__paragraph_tokenize(paper.back_matter)
             self.__wirte_json(self.get_directory_path(), paper.paper_id, result_words)
 
+    def load_stop_words(self, file_path: str):
+        with open(file_path, "r") as file:
+            content = file.read()
+        content = content.strip()
+        content = content.replace('"', "").replace(" ", "").strip(",")
+        words_list = content.split(",")
+        self.__stopwords = words_list
+
     def draw_dependency_parse(self, text: str):
         doc = self.__nlp(text)
         displacy.serve(doc, style="dep")
+
+    def get_paper_language(self):
+        self.__open_all_files("*.json")
+        result: pd.DataFrame = pd.DataFrame(columns=["file", "language", "confidence"])
+        for i, file_path in enumerate(self.__files):
+            paper = self.__read_json(file_path)
+            text: str = ""
+            if len(paper.metadata.title) > 0:
+                text = paper.metadata.title
+            if len(paper.abstract) > 0:
+                text = paper.abstract
+            if len(paper.body_text) > 0:
+                text = paper.body_text[0].text
+            language, confidence = langid.classify(text)
+            result.loc[i] = [paper.paper_id, language, confidence]
+        return result
 
     def __text_tokenize(self, text: str):
         result: list[str] = []
         doc = self.__nlp(text)
         for token in doc:
-            result.append(token.lemma_)
+            # remove stop_words, punction and space
+            if not (token.is_stop or token.is_punct or token.is_space):
+                if not (token in self.__stopwords):
+                    # lemmatization
+                    result.append(token.lemma_)
         return result
 
     def __paragraph_tokenize(
-            self,
-            paragraph: Union[
-                list[paper_schema.Paragraph], list[paper_schema.AbstractParagraph]
-            ],
+        self,
+        paragraph: Union[
+            list[paper_schema.Paragraph], list[paper_schema.AbstractParagraph]
+        ],
     ):
-        result: list[str] = []
+        results: list[str] = []
         for sentence in paragraph:
             # remove cite
             for cite in sentence.cite_spans:
@@ -62,13 +93,9 @@ class SpacyTokenizer:
             # remove ref
             for ref in sentence.ref_spans:
                 sentence.text = sentence.text.replace(ref.text, "", 1)
-            doc = self.__nlp(sentence.text)
-            for token in doc:
-                # remove stop_words, punction and space
-                if not (token.is_stop or token.is_punct or token.is_space):
-                    # lemmatization
-                    result.append(token.lemma_)
-        return result
+            result = self.__text_tokenize(sentence.text)
+            results.extend(result)
+        return results
 
     def __wirte_json(self, file_path: str, file_name: str, result: list):
         file_path = file_path + "/results/" + file_name + ".json"
@@ -85,7 +112,7 @@ class SpacyTokenizer:
         else:
             raise ValueError("No JSON files found in the directory.")
 
-    def __open_all_files(self, file_type: str):
+    def __open_exist_files(self, file_type: str):
         if len(self.__directory_path) > 0 and len(file_type) > 0:
             dir = self.__directory_path + "/results/" + file_type
             files = glob.glob(dir)
@@ -93,7 +120,7 @@ class SpacyTokenizer:
         else:
             raise ValueError("empty directory path or file type")
 
-    def __open_exist_files(self, file_type: str):
+    def __open_all_files(self, file_type: str):
         if len(self.__directory_path) > 0 and len(file_type) > 0:
             dir = self.__directory_path + "/" + file_type
             files = glob.glob(dir)
